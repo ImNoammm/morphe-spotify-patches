@@ -1,8 +1,12 @@
 package app.noam.extension.spotify.settings;
 
+import android.content.Context;
+import android.content.Intent;
+
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,9 +31,39 @@ public final class SettingsTile {
         return "";
     }
 
-    /** Patched to return the click-action class, e.g. {@code p.e5g0}. */
-    private static String clickActionClassName() {
+    /** Patched to return the destination-action class, e.g. {@code p.g5g0}. */
+    private static String destinationActionClassName() {
         return "";
+    }
+
+    /**
+     * The destination Spotify is asked to navigate to when the Morphe row is tapped.
+     *
+     * Spotify's settings rows do not take a click listener: whichever action a row carries, it ends
+     * up producing a destination string that is handed to the navigator. So the row carries this
+     * sentinel, and the patch intercepts it on the way to the navigator.
+     */
+    private static final String MORPHE_DESTINATION = "morphe:settings";
+
+    /**
+     * Called with every settings destination before Spotify navigates to it.
+     *
+     * @return the destination to actually navigate to.
+     */
+    public static String rewriteDestination(String destination) {
+        try {
+            if (MORPHE_DESTINATION.equals(destination)) {
+                Context context = Utils.getContext();
+                if (context != null) {
+                    Intent intent = new Intent(context, MorpheSettingsActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                }
+            }
+        } catch (Throwable ex) {
+            Utils.logError("Could not open the Morphe settings screen", ex);
+        }
+        return destination;
     }
 
     /**
@@ -56,7 +90,7 @@ public final class SettingsTile {
 
     private static Object buildTile(Object[] items) throws Exception {
         Class<?> holderClass = Class.forName(navigationHolderClassName());
-        Class<?> actionClass = Class.forName(clickActionClassName());
+        Class<?> actionClass = Class.forName(destinationActionClassName());
 
         // A row from this very list is the template: it supplies the obfuscated row class, the row
         // "kind" value, and the navigation metadata, none of which can be named at compile time.
@@ -84,15 +118,11 @@ public final class SettingsTile {
         Object navigationMetadata = firstFieldAssignableTo(
                 templateHolder, holderConstructor.getParameterTypes()[0]);
 
-        Constructor<?> actionConstructor = functionActionConstructor(actionClass);
-        Object[] actionArguments = new Object[actionConstructor.getParameterTypes().length];
-        for (int i = 0; i < actionArguments.length; i++) {
-            actionArguments[i] = defaultFor(actionConstructor.getParameterTypes()[i]);
-        }
-        actionArguments[0] = Boolean.TRUE;
-        actionArguments[1] = new OpenMorpheSettings();
+        // The action simply carries the destination; nothing here has to satisfy a Kotlin lambda type.
+        Constructor<?> actionConstructor = actionClass.getDeclaredConstructor(String.class);
+        actionConstructor.setAccessible(true);
 
-        Object action = actionConstructor.newInstance(actionArguments);
+        Object action = actionConstructor.newInstance(MORPHE_DESTINATION);
         Object accessor = holderConstructor.newInstance(navigationMetadata, action);
 
         return buildRow(template, items, accessor);
@@ -147,7 +177,15 @@ public final class SettingsTile {
             for (int f = 0; f < fields.length; f++) {
                 if (fields[f].getType() != parameterType) continue;
                 if (seen++ != occurrence) continue;
-                arguments[i] = shared[f];
+
+                if (isFlow(parameterType)) {
+                    // A row's flows are its own objects, never shared, so the shared-value rule would
+                    // leave them null — and the renderer collects one of them without a null check.
+                    Object templateFlow = fields[f].get(template);
+                    arguments[i] = templateFlow == null ? null : flowOfTrue(templateFlow);
+                } else {
+                    arguments[i] = shared[f];
+                }
                 break;
             }
         }
@@ -158,6 +196,45 @@ public final class SettingsTile {
         arguments[accessorParameterIndex(parameterTypes, accessor)] = accessor;
 
         return rowConstructor.newInstance(arguments);
+    }
+
+    /** A settings flow, which the renderer collects to decide whether a row is shown and enabled. */
+    private static boolean isFlow(Class<?> type) {
+        if (!type.isInterface()) return false;
+        for (Method method : type.getMethods()) {
+            if (method.getName().equals("collect")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Builds a flow that emits true, by cloning the template's own flow object.
+     *
+     * These flows are constant-valued and compile to a shared class taking the value and a tag
+     * identifying which flow it stands for, so keeping the tag and swapping the value yields a flow
+     * of the same kind that reports the Morphe row as available.
+     */
+    private static Object flowOfTrue(Object templateFlow) {
+        try {
+            Class<?> flowClass = templateFlow.getClass();
+
+            int tag = 0;
+            for (Field field : flowClass.getDeclaredFields()) {
+                if (field.getType() == int.class) {
+                    field.setAccessible(true);
+                    tag = field.getInt(templateFlow);
+                    break;
+                }
+            }
+
+            Constructor<?> constructor = flowClass.getDeclaredConstructor(Object.class, int.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance(Boolean.TRUE, tag);
+        } catch (Throwable ex) {
+            // Falling back to the template's flow keeps the row rendering, following its neighbour.
+            Utils.log("Could not build the Morphe row flow: " + ex);
+            return templateFlow;
+        }
     }
 
     /** @return the value held by [field] in at least two rows, or null if every row differs. */
@@ -190,20 +267,6 @@ public final class SettingsTile {
             }
         }
         throw new IllegalStateException(type + " has no constructor taking " + count + " arguments");
-    }
-
-    /** The constructor that takes a Kotlin function, which is the one that runs code on tap. */
-    private static Constructor<?> functionActionConstructor(Class<?> type) {
-        for (Constructor<?> candidate : type.getDeclaredConstructors()) {
-            Class<?>[] parameters = candidate.getParameterTypes();
-            if (parameters.length >= 2
-                    && parameters[0] == boolean.class
-                    && parameters[1].getName().equals("kotlin.jvm.functions.Function1")) {
-                candidate.setAccessible(true);
-                return candidate;
-            }
-        }
-        throw new IllegalStateException(type + " does not take a click handler");
     }
 
     private static Object firstFieldAssignableTo(Object instance, Class<?> type) throws Exception {

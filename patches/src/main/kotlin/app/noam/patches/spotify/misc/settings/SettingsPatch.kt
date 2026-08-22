@@ -76,13 +76,16 @@ val settingsPatch = bytecodePatch(
             } ?: return@forEach
 
             val actionInterface = constructor.parameterTypes[1].toString()
+
+            // Two actions carry a destination; the one that takes nothing but a string is
+            // unambiguous, while the other also accepts an internal screen enum.
             val action = classDefByOrNull { classDef ->
                 classDef.interfaces.contains(actionInterface) &&
+                    classDef.directMethods.count { it.name == "<init>" } == 1 &&
                     classDef.directMethods.any { candidate ->
                         candidate.name == "<init>" &&
-                            candidate.parameterTypes.size >= 2 &&
-                            candidate.parameterTypes[0] == "Z" &&
-                            candidate.parameterTypes[1] == "Lkotlin/jvm/functions/Function1;"
+                            candidate.parameterTypes.size == 1 &&
+                            candidate.parameterTypes[0] == "Ljava/lang/String;"
                     }
             } ?: return@forEach
 
@@ -98,7 +101,7 @@ val settingsPatch = bytecodePatch(
         // never has to name an obfuscated class at compile time.
         mutableClassDefBy(Constants.SETTINGS_TILE_CLASS).methods.apply {
             first { it.name == "navigationHolderClassName" }.returnString(holderType!!.toBinaryName())
-            first { it.name == "clickActionClassName" }.returnString(actionType!!.toBinaryName())
+            first { it.name == "destinationActionClassName" }.returnString(actionType!!.toBinaryName())
         }
 
         // Finally, extend the array of rows for this section with the Morphe row. Patching the array
@@ -124,6 +127,16 @@ val settingsPatch = bytecodePatch(
             """
                 invoke-static/range { v$arrayRegister .. v$arrayRegister }, ${Constants.SETTINGS_TILE_CLASS}->extend([Ljava/lang/Object;)[Ljava/lang/Object;
                 move-result-object v$arrayRegister
+            """,
+        )
+
+        // Tapping the Morphe row asks Spotify to navigate to a destination only this patch knows;
+        // intercept it here, where every settings destination passes through.
+        NavigateToDestinationFingerprint.method.addInstructions(
+            0,
+            """
+                invoke-static { p1 }, ${Constants.SETTINGS_TILE_CLASS}->rewriteDestination(Ljava/lang/String;)Ljava/lang/String;
+                move-result-object p1
             """,
         )
 
