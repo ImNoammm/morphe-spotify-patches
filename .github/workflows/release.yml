@@ -36,7 +36,10 @@ jobs:
           set -euo pipefail
           version="v$(date -u +%Y.%m.%d.%H%M)"
           mpp="patches-${version}.mpp"
-          cp patches/build/libs/patches-*.mpp "$mpp"
+
+          # The build also produces -sources and -javadoc bundles; only the real one is released.
+          built=$(ls patches/build/libs/*.mpp | grep -vE -- '-(sources|javadoc)\\.mpp$' | head -1)
+          cp "$built" "$mpp"
 
           gh release create "$version" "$mpp" \
             --title "$version" \
