@@ -7,15 +7,22 @@ import android.util.Xml;
 import org.xmlpull.v1.XmlPullParser;
 
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.lang.reflect.Field;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.ProtocolException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 
 import app.noam.extension.spotify.Utils;
 
@@ -85,16 +92,18 @@ public final class WebDav {
      * @throws IOException with the first failure if none of them do.
      */
     public List<RemoteTrack> listFolder(String folder) throws IOException {
-        IOException firstFailure = null;
+        IOException lastFailure = null;
 
         for (String root : candidateRoots(folder)) {
             try {
                 return listAudioFiles(root);
             } catch (IOException ex) {
-                if (firstFailure == null) firstFailure = ex;
+                // Keep the latest: the first candidate is a guess, so its error is rarely the useful one.
+                lastFailure = ex;
+                Utils.log("Listing " + root + " failed: " + ex.getMessage());
             }
         }
-        throw firstFailure != null ? firstFailure : new IOException("The folder could not be listed");
+        throw lastFailure != null ? lastFailure : new IOException("The folder could not be listed");
     }
 
     /** Recursively lists every audio file below {@code url}. */
@@ -135,34 +144,180 @@ public final class WebDav {
         boolean isCollection;
     }
 
+    /**
+     * Lists one collection.
+     *
+     * PROPFIND is sent over a socket rather than through HttpURLConnection. Android's implementation
+     * is backed by OkHttp, which refuses the verb outright, and neither workaround survives contact
+     * with a real server: forcing the inherited method field is silently ignored, so the request
+     * leaves as a GET, and Nextcloud answers POST + X-HTTP-Method-Override with 501. Speaking
+     * HTTP/1.1 directly is the only way to be sure the server sees a PROPFIND.
+     */
     private List<Entry> propfind(String url) throws IOException {
-        HttpURLConnection connection = open(url);
-        setPropfindMethod(connection);
-        connection.setRequestProperty("Depth", "1");
-        connection.setRequestProperty("Content-Type", "application/xml; charset=utf-8");
-        connection.setDoOutput(true);
-
         String body = "<?xml version=\"1.0\"?>"
                 + "<d:propfind xmlns:d=\"DAV:\"><d:prop>"
                 + "<d:resourcetype/><d:getcontentlength/><d:getcontenttype/>"
                 + "</d:prop></d:propfind>";
-        connection.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
 
-        int status = connection.getResponseCode();
-        if (status != 207 && status != 200) {
-            connection.disconnect();
-            throw new IOException("PROPFIND returned HTTP " + status);
+        Response response = request(url, body);
+
+        // Only 207 Multi-Status is a listing. A 200 here means something answered that is not
+        // WebDAV — treating it as success is how an unnoticed GET looked like an empty folder.
+        if (response.status != 207) {
+            throw new IOException("PROPFIND returned HTTP " + response.status);
         }
 
-        try (InputStream in = connection.getInputStream()) {
-            return parseMultiStatus(in, url);
+        try {
+            return parseMultiStatus(new ByteArrayInputStream(response.body), url);
         } catch (IOException ex) {
             throw ex;
         } catch (Exception ex) {
             throw new IOException("Could not read the folder listing: " + ex.getMessage(), ex);
-        } finally {
-            connection.disconnect();
         }
+    }
+
+    private static final class Response {
+        int status;
+        byte[] body;
+    }
+
+    /** Sends a PROPFIND over a socket and reads the whole response. */
+    private Response request(String url, String body) throws IOException {
+        Uri uri = Uri.parse(url);
+        boolean secure = !"http".equalsIgnoreCase(uri.getScheme());
+        int port = uri.getPort() > 0 ? uri.getPort() : (secure ? 443 : 80);
+        String host = uri.getHost();
+
+        String path = uri.getEncodedPath();
+        if (path == null || path.isEmpty()) path = "/";
+        if (uri.getEncodedQuery() != null) path = path + "?" + uri.getEncodedQuery();
+
+        byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+
+        StringBuilder head = new StringBuilder();
+        head.append("PROPFIND ").append(path).append(" HTTP/1.1\r\n");
+        head.append("Host: ").append(host).append(secure && port != 443 || !secure && port != 80
+                ? ":" + port : "").append("\r\n");
+        head.append("Depth: 1\r\n");
+        head.append("Content-Type: application/xml; charset=utf-8\r\n");
+        head.append("Content-Length: ").append(payload.length).append("\r\n");
+        head.append("Accept: */*\r\n");
+        head.append("User-Agent: Morphe-LocalServer\r\n");
+        if (username != null && !username.isEmpty()) {
+            String credentials = username + ":" + (password == null ? "" : password);
+            head.append("Authorization: Basic ").append(
+                    Base64.encodeToString(credentials.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP))
+                    .append("\r\n");
+        }
+        head.append("Connection: close\r\n\r\n");
+
+        Socket socket = null;
+        try {
+            socket = new Socket();
+            socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
+            socket.setSoTimeout(READ_TIMEOUT_MS);
+
+            if (secure) {
+                // Layering TLS over the connected socket keeps the connect timeout and still sends
+                // the host as SNI, which shared hosts need to serve the right certificate.
+                SSLSocket sslSocket = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
+                        .createSocket(socket, host, port, true);
+                sslSocket.startHandshake();
+
+                if (!HttpsURLConnection.getDefaultHostnameVerifier()
+                        .verify(host, sslSocket.getSession())) {
+                    throw new IOException("The certificate does not match " + host);
+                }
+                socket = sslSocket;
+            }
+
+            OutputStream out = socket.getOutputStream();
+            out.write(head.toString().getBytes(StandardCharsets.UTF_8));
+            out.write(payload);
+            out.flush();
+
+            return readResponse(socket.getInputStream());
+        } finally {
+            if (socket != null) {
+                try {
+                    socket.close();
+                } catch (IOException ignored) {
+                    // The socket is being discarded either way.
+                }
+            }
+        }
+    }
+
+    private Response readResponse(InputStream in) throws IOException {
+        ByteArrayOutputStream raw = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = in.read(buffer)) > 0) raw.write(buffer, 0, count);
+
+        byte[] bytes = raw.toByteArray();
+        int separator = indexOfHeaderEnd(bytes);
+        if (separator < 0) throw new IOException("The server sent a malformed response");
+
+        String headers = new String(bytes, 0, separator, StandardCharsets.ISO_8859_1);
+        byte[] payload = new byte[bytes.length - (separator + 4)];
+        System.arraycopy(bytes, separator + 4, payload, 0, payload.length);
+
+        Response response = new Response();
+        response.status = parseStatus(headers);
+        response.body = headers.toLowerCase(Locale.US).contains("transfer-encoding: chunked")
+                ? dechunk(payload)
+                : payload;
+        return response;
+    }
+
+    private static int indexOfHeaderEnd(byte[] bytes) {
+        for (int i = 0; i + 3 < bytes.length; i++) {
+            if (bytes[i] == '\r' && bytes[i + 1] == '\n' && bytes[i + 2] == '\r' && bytes[i + 3] == '\n') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int parseStatus(String headers) throws IOException {
+        int firstSpace = headers.indexOf(' ');
+        if (firstSpace < 0) throw new IOException("The server sent no status line");
+        int secondSpace = headers.indexOf(' ', firstSpace + 1);
+        if (secondSpace < 0) secondSpace = headers.indexOf('\r', firstSpace + 1);
+        try {
+            return Integer.parseInt(headers.substring(firstSpace + 1, secondSpace).trim());
+        } catch (Exception ex) {
+            throw new IOException("The server sent an unreadable status line");
+        }
+    }
+
+    private static byte[] dechunk(byte[] payload) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int position = 0;
+        while (position < payload.length) {
+            int lineEnd = position;
+            while (lineEnd + 1 < payload.length
+                    && !(payload[lineEnd] == '\r' && payload[lineEnd + 1] == '\n')) {
+                lineEnd++;
+            }
+            String sizeLine = new String(payload, position, lineEnd - position, StandardCharsets.ISO_8859_1).trim();
+            int semicolon = sizeLine.indexOf(';');
+            if (semicolon >= 0) sizeLine = sizeLine.substring(0, semicolon);
+
+            int size;
+            try {
+                size = Integer.parseInt(sizeLine.trim(), 16);
+            } catch (NumberFormatException ex) {
+                break;
+            }
+            if (size <= 0) break;
+
+            position = lineEnd + 2;
+            if (position + size > payload.length) size = payload.length - position;
+            out.write(payload, position, size);
+            position += size + 2;
+        }
+        return out.toByteArray();
     }
 
     private List<Entry> parseMultiStatus(InputStream in, String requestUrl) throws Exception {
@@ -262,33 +417,6 @@ public final class WebDav {
             throw new IOException("GET returned HTTP " + status);
         }
         return connection;
-    }
-
-    /**
-     * Android's HttpURLConnection is backed by OkHttp, whose setRequestMethod only accepts the
-     * standard verbs and rejects PROPFIND outright. The method field it actually sends is the one
-     * inherited from HttpURLConnection, so it can be set directly; if even that is blocked, servers
-     * built on sabre/dav (which is what Nextcloud and ownCloud use) honour the override header.
-     */
-    private void setPropfindMethod(HttpURLConnection connection) throws IOException {
-        try {
-            connection.setRequestMethod("PROPFIND");
-            return;
-        } catch (ProtocolException expected) {
-            // Fall through to the workarounds below.
-        }
-
-        try {
-            Field method = HttpURLConnection.class.getDeclaredField("method");
-            method.setAccessible(true);
-            method.set(connection, "PROPFIND");
-            return;
-        } catch (Exception ex) {
-            Utils.log("Could not set the PROPFIND method directly: " + ex);
-        }
-
-        connection.setRequestMethod("POST");
-        connection.setRequestProperty("X-HTTP-Method-Override", "PROPFIND");
     }
 
     private HttpURLConnection open(String url) throws IOException {
