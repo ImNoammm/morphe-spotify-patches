@@ -7,6 +7,19 @@ Morphe patches for the Spotify Android app.
 | **Morphe settings** | Adds a **Morphe** row to Spotify's settings. It is where the settings of every other patch in this bundle live. |
 | **Local files from a server** | Lets Spotify take its local files from a Nextcloud (or plain WebDAV) folder. The tracks appear under **Local Files** and are streamed from the server as they play. |
 
+## Add it to Morphe
+
+**[Add this source to Morphe](https://morphe.software/add-source?github=ImNoammm/morphe-spotify-patches&name=Spotify)**
+
+Open that link on the device running Morphe Manager, or paste either of these into Morphe as a
+source by hand:
+
+- `https://github.com/ImNoammm/morphe-spotify-patches`
+- `https://raw.githubusercontent.com/ImNoammm/morphe-spotify-patches/main/patches-bundle.json`
+  (the bundle metadata directly, if the repository URL is not accepted)
+
+Morphe then picks up each release automatically.
+
 ## Local files from a server
 
 Spotify's local-file scanner already knows how to read a track whose location is a `content://`
