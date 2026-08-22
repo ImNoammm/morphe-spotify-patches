@@ -27,7 +27,10 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew build --no-daemon
+        # buildAndroid compiles the patches to DEX and merges them into the .mpp. Without it the
+        # bundle is JVM-only: Morphe Desktop loads it, but Morphe Manager on Android cannot, and the
+        # source shows up with no patches and no version.
+        run: ./gradlew build buildAndroid --no-daemon
 
       - name: Publish the release
         env:

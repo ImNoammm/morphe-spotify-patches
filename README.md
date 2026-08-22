@@ -52,10 +52,12 @@ and is not something a patch changes.
 ## Building
 
 ```bash
-./gradlew build
+./gradlew build buildAndroid
 ```
 
-The bundle is written to `patches/build/libs/patches-<version>.mpp`. Building resolves the Morphe
+The bundle is written to `patches/build/libs/patches-<version>.mpp`. `buildAndroid` is what compiles
+the patches to DEX and merges them into that file; without it the bundle only works in Morphe
+Desktop, and Morphe Manager on Android reports the source as having no patches. Building resolves the Morphe
 Gradle plugin from GitHub Packages, which requires authentication even for public packages, so set
 `GITHUB_ACTOR` and `GITHUB_TOKEN` (or `gpr.user`/`gpr.key` in `~/.gradle/gradle.properties`).
 
