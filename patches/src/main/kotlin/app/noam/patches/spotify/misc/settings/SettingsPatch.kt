@@ -104,9 +104,8 @@ val settingsPatch = bytecodePatch(
             first { it.name == "destinationActionClassName" }.returnString(actionType!!.toBinaryName())
         }
 
-        // The Morphe row is modelled on a real row from this section, but belongs in the main menu,
-        // so this call only takes the copy. Patching the array rather than the built list keeps the
-        // list's own type intact.
+        // Finally, extend the array of rows for this section with the Morphe row. Patching the array
+        // rather than the built list keeps the list's own type intact.
         val listBuilderIndex = method.indexOfFirstOrThrow(rowConstructorIndex, "the section row list") {
             if (it.opcode != Opcode.INVOKE_STATIC && it.opcode != Opcode.INVOKE_STATIC_RANGE) {
                 return@indexOfFirstOrThrow false
@@ -126,43 +125,10 @@ val settingsPatch = bytecodePatch(
         method.addInstructions(
             listBuilderIndex,
             """
-                invoke-static/range { v$arrayRegister .. v$arrayRegister }, ${Constants.SETTINGS_TILE_CLASS}->captureTile([Ljava/lang/Object;)[Ljava/lang/Object;
+                invoke-static/range { v$arrayRegister .. v$arrayRegister }, ${Constants.SETTINGS_TILE_CLASS}->extend([Ljava/lang/Object;)[Ljava/lang/Object;
                 move-result-object v$arrayRegister
             """,
         )
-
-        // Add the row to the main settings menu, just before its entries are converted for display.
-        MainSettingsMenuFingerprint.method.apply {
-            val anchorIndex = indexOfFirstOrThrow(description = "the settings page anchor") {
-                it.opcode == Opcode.CONST_STRING &&
-                    ((it as ReferenceInstruction).reference as StringReference).string == "notificationsPage"
-            }
-
-            val menuListIndex = indexOfFirstOrThrow(anchorIndex, "the main settings menu list") {
-                if (it.opcode != Opcode.INVOKE_STATIC && it.opcode != Opcode.INVOKE_STATIC_RANGE) {
-                    return@indexOfFirstOrThrow false
-                }
-                val reference = (it as ReferenceInstruction).reference as? MethodReference
-                    ?: return@indexOfFirstOrThrow false
-                reference.parameterTypes.size == 1 &&
-                    reference.parameterTypes[0] == "Ljava/util/List;" &&
-                    reference.returnType != "V"
-            }
-
-            val listRegister = when (val instruction = getInstruction(menuListIndex)) {
-                is RegisterRangeInstruction -> instruction.startRegister
-                is FiveRegisterInstruction -> instruction.registerC
-                else -> throw PatchException("Unexpected main settings menu instruction")
-            }
-
-            addInstructions(
-                menuListIndex,
-                """
-                    invoke-static/range { v$listRegister .. v$listRegister }, ${Constants.SETTINGS_TILE_CLASS}->addToMainMenu(Ljava/util/List;)Ljava/util/List;
-                    move-result-object v$listRegister
-                """,
-            )
-        }
 
         // Guard against a silent no-op: the row constructor is needed by the extension at runtime.
         if (rowConstructor.parameterTypes.size < 10) {

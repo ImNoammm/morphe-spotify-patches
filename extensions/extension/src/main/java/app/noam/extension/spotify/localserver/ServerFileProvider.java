@@ -48,33 +48,7 @@ public final class ServerFileProvider extends ContentProvider {
         // Providers are created before the application object, so this is the earliest and most
         // reliable place to capture the context for the rest of the extension.
         Utils.setContext(getContext());
-        rescanInBackground();
         return true;
-    }
-
-    /**
-     * Refreshes the index once per app start, so tracks added to the server folder appear without
-     * anyone having to open the settings and scan by hand.
-     *
-     * Deliberately tied to process start rather than a watcher or a timer: no background service, no
-     * wake locks, and nothing that can race Spotify's own file scanner while the app is running.
-     */
-    private void rescanInBackground() {
-        if (!ServerConfig.isEnabled() || !ServerConfig.isConfigured()) return;
-
-        new Thread(() -> {
-            try {
-                int found = ServerIndex.refresh(null).size();
-                Utils.log("Rescanned the server folder on startup: " + found + " tracks");
-
-                // Ask Spotify to read local files again, now that the index has changed.
-                LocalServerHook.requestRescan();
-            } catch (Exception ex) {
-                // A server that is unreachable at startup must not stop the app; the previous index
-                // stays in place and the settings screen can always scan again.
-                Utils.log("Startup rescan failed: " + ex);
-            }
-        }, "morphe-startup-scan").start();
     }
 
     public static String authority(Context context) {

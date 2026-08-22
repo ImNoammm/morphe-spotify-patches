@@ -1,9 +1,9 @@
 package app.noam.extension.spotify.settings;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,68 +42,26 @@ public final class SettingsTile {
      */
     private static final String MORPHE_DESTINATION = "morphe://settings";
 
-    /** Built once from a real settings row, then placed in the main settings menu. */
-    private static volatile Object tile;
-
     /**
-     * Called while Spotify builds the section that the Morphe row is modelled on.
+     * Called from Spotify's settings section builder with that section's array of rows.
      *
-     * The row is not added here: it belongs in the main settings menu. This is only where a genuine
-     * row can be got hold of to copy, which works out because Spotify assembles its sub-pages while
-     * putting the main menu together, so the copy exists by the time the menu is finalised.
-     *
-     * @return the section's rows, untouched.
+     * @return the same rows plus the Morphe row, or the untouched array if the row cannot be built.
      */
-    public static Object[] captureTile(Object[] rows) {
+    public static Object[] extend(Object[] rows) {
         try {
-            if (tile == null) tile = buildTile(rows);
-        } catch (Throwable ex) {
-            Utils.logError("Could not build the Morphe settings tile", ex);
-        }
-        return rows;
-    }
+            Object tile = buildTile(rows);
 
-    /**
-     * Called with the main settings menu's entries.
-     *
-     * @return the entries with the Morphe row added, or the untouched list if it could not be built.
-     */
-    public static List<Object> addToMainMenu(List<Object> items) {
-        try {
-            if (tile == null) return items;
-
-            List<Object> extended = new ArrayList<>(items);
-
-            // Sit with the other entries rather than below the log-out row, which comes last.
-            int logout = indexOfLogout(extended);
-            if (logout >= 0) {
-                extended.add(logout, tile);
-            } else {
-                extended.add(tile);
-            }
+            // The array keeps its original component type, so the caller's list builder sees exactly
+            // the array type it expects.
+            Object[] extended = (Object[]) Array.newInstance(
+                    rows.getClass().getComponentType(), rows.length + 1);
+            System.arraycopy(rows, 0, extended, 0, rows.length);
+            extended[rows.length] = tile;
             return extended;
         } catch (Throwable ex) {
-            Utils.logError("Could not add the Morphe row to the main settings menu", ex);
-            return items;
+            Utils.logError("Could not add the Morphe settings tile", ex);
+            return rows;
         }
-    }
-
-    private static int indexOfLogout(List<Object> items) {
-        for (int i = items.size() - 1; i >= 0; i--) {
-            Object item = items.get(i);
-            if (item == null) continue;
-
-            for (Field field : item.getClass().getDeclaredFields()) {
-                if (field.getType() != String.class) continue;
-                field.setAccessible(true);
-                try {
-                    if ("logout".equals(field.get(item))) return i;
-                } catch (IllegalAccessException ignored) {
-                    // Nothing to do; the row simply goes at the end.
-                }
-            }
-        }
-        return -1;
     }
 
     private static Object buildTile(Object[] items) throws Exception {

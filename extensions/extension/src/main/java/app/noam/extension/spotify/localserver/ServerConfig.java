@@ -16,7 +16,6 @@ public final class ServerConfig {
     public static final String KEY_PASSWORD = "password";
     public static final String KEY_FOLDER = "folder";
     public static final String KEY_STREAM = "stream";
-    public static final String KEY_BEAUTIFUL_LYRICS = "beautiful_lyrics";
 
     private ServerConfig() {}
 

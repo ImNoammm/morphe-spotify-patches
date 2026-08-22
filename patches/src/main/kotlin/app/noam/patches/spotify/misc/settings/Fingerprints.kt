@@ -17,17 +17,3 @@ internal object SettingsSectionFingerprint : Fingerprint(
     ),
 )
 
-
-/**
- * Builds the main settings menu.
- *
- * Its entries are collected into a list which is then converted for display; injecting just before
- * that conversion is what puts the Morphe row among them. Anchored on a settings page id, which is a
- * plain string and so unaffected by obfuscation.
- */
-internal object MainSettingsMenuFingerprint : Fingerprint(
-    returnType = "L",
-    filters = listOf(
-        string("notificationsPage"),
-    ),
-)
