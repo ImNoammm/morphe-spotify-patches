@@ -48,12 +48,39 @@ internal val settingsResourcePatch = resourcePatch(
             val packageName = manifest.getAttribute("package")
             if (packageName.isEmpty()) throw PatchException("The manifest has no package name")
 
+            // Tapping the Morphe row makes Spotify open its destination as an external link, so the
+            // screen is reached by answering that link rather than by hooking the navigator.
             application.appendChild(
                 document.createElement("activity").apply {
                     setAttributeNS(androidNamespace, "android:name", Constants.SETTINGS_ACTIVITY)
-                    setAttributeNS(androidNamespace, "android:exported", "false")
+                    setAttributeNS(androidNamespace, "android:exported", "true")
                     setAttributeNS(androidNamespace, "android:label", "Morphe")
                     setAttributeNS(androidNamespace, "android:theme", "@android:style/Theme.Material")
+
+                    appendChild(
+                        document.createElement("intent-filter").apply {
+                            appendChild(
+                                document.createElement("action").apply {
+                                    setAttributeNS(androidNamespace, "android:name", "android.intent.action.VIEW")
+                                },
+                            )
+                            appendChild(
+                                document.createElement("category").apply {
+                                    setAttributeNS(androidNamespace, "android:name", "android.intent.category.DEFAULT")
+                                },
+                            )
+                            appendChild(
+                                document.createElement("category").apply {
+                                    setAttributeNS(androidNamespace, "android:name", "android.intent.category.BROWSABLE")
+                                },
+                            )
+                            appendChild(
+                                document.createElement("data").apply {
+                                    setAttributeNS(androidNamespace, "android:scheme", Constants.SETTINGS_SCHEME)
+                                },
+                            )
+                        },
+                    )
                 },
             )
 

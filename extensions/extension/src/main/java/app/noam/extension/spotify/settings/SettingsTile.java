@@ -1,8 +1,5 @@
 package app.noam.extension.spotify.settings;
 
-import android.content.Context;
-import android.content.Intent;
-
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -40,31 +37,10 @@ public final class SettingsTile {
      * The destination Spotify is asked to navigate to when the Morphe row is tapped.
      *
      * Spotify's settings rows do not take a click listener: whichever action a row carries, it ends
-     * up producing a destination string that is handed to the navigator. So the row carries this
-     * sentinel, and the patch intercepts it on the way to the navigator.
+     * up producing a destination string. This one is opened as an external link, which Android hands
+     * straight to the Morphe screen because the patch registers the scheme against it.
      */
-    private static final String MORPHE_DESTINATION = "morphe:settings";
-
-    /**
-     * Called with every settings destination before Spotify navigates to it.
-     *
-     * @return the destination to actually navigate to.
-     */
-    public static String rewriteDestination(String destination) {
-        try {
-            if (MORPHE_DESTINATION.equals(destination)) {
-                Context context = Utils.getContext();
-                if (context != null) {
-                    Intent intent = new Intent(context, MorpheSettingsActivity.class);
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(intent);
-                }
-            }
-        } catch (Throwable ex) {
-            Utils.logError("Could not open the Morphe settings screen", ex);
-        }
-        return destination;
-    }
+    private static final String MORPHE_DESTINATION = "morphe://settings";
 
     /**
      * Called from Spotify's settings section builder with that section's array of rows.
@@ -182,7 +158,7 @@ public final class SettingsTile {
                     // A row's flows are its own objects, never shared, so the shared-value rule would
                     // leave them null — and the renderer collects one of them without a null check.
                     Object templateFlow = fields[f].get(template);
-                    arguments[i] = templateFlow == null ? null : flowOfTrue(templateFlow);
+                    arguments[i] = templateFlow == null ? null : flowLike(templateFlow);
                 } else {
                     arguments[i] = shared[f];
                 }
@@ -208,30 +184,36 @@ public final class SettingsTile {
     }
 
     /**
-     * Builds a flow that emits true, by cloning the template's own flow object.
+     * Returns a flow to give the Morphe row, based on the template row's own.
      *
-     * These flows are constant-valued and compile to a shared class taking the value and a tag
-     * identifying which flow it stands for, so keeping the tag and swapping the value yields a flow
-     * of the same kind that reports the Morphe row as available.
+     * These constant-valued flows compile to a shared class holding the value and a tag saying which
+     * flow it stands for. When the value is a boolean it is a yes/no condition — typically whether
+     * the row is available — so the clone reports true. Any other value belongs to a type only that
+     * row understands, so the template's flow is reused untouched rather than risking a wrong type.
      */
-    private static Object flowOfTrue(Object templateFlow) {
+    private static Object flowLike(Object templateFlow) {
         try {
             Class<?> flowClass = templateFlow.getClass();
 
-            int tag = 0;
+            Field valueField = null;
+            Field tagField = null;
             for (Field field : flowClass.getDeclaredFields()) {
-                if (field.getType() == int.class) {
-                    field.setAccessible(true);
-                    tag = field.getInt(templateFlow);
-                    break;
+                field.setAccessible(true);
+                if (field.getType() == int.class && tagField == null) {
+                    tagField = field;
+                } else if (!field.getType().isPrimitive() && valueField == null) {
+                    valueField = field;
                 }
             }
 
+            if (valueField == null || tagField == null) return templateFlow;
+            if (!(valueField.get(templateFlow) instanceof Boolean)) return templateFlow;
+
             Constructor<?> constructor = flowClass.getDeclaredConstructor(Object.class, int.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(Boolean.TRUE, tag);
+            return constructor.newInstance(Boolean.TRUE, tagField.getInt(templateFlow));
         } catch (Throwable ex) {
-            // Falling back to the template's flow keeps the row rendering, following its neighbour.
+            // Reusing the template's flow keeps the row rendering, following its neighbour.
             Utils.log("Could not build the Morphe row flow: " + ex);
             return templateFlow;
         }

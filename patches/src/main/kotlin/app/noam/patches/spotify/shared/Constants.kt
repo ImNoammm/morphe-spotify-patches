@@ -9,4 +9,7 @@ internal object Constants {
     const val LOCAL_SERVER_HOOK_CLASS = "$EXTENSION_PACKAGE/localserver/LocalServerHook;"
     const val SETTINGS_ACTIVITY = "app.noam.extension.spotify.settings.MorpheSettingsActivity"
     const val FILE_PROVIDER = "app.noam.extension.spotify.localserver.ServerFileProvider"
+
+    /** The scheme the Morphe settings row navigates to. */
+    const val SETTINGS_SCHEME = "morphe"
 }

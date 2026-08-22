@@ -130,16 +130,6 @@ val settingsPatch = bytecodePatch(
             """,
         )
 
-        // Tapping the Morphe row asks Spotify to navigate to a destination only this patch knows;
-        // intercept it here, where every settings destination passes through.
-        NavigateToDestinationFingerprint.method.addInstructions(
-            0,
-            """
-                invoke-static { p1 }, ${Constants.SETTINGS_TILE_CLASS}->rewriteDestination(Ljava/lang/String;)Ljava/lang/String;
-                move-result-object p1
-            """,
-        )
-
         // Guard against a silent no-op: the row constructor is needed by the extension at runtime.
         if (rowConstructor.parameterTypes.size < 10) {
             throw PatchException("Unexpected settings row constructor: $rowConstructor")
