@@ -158,8 +158,7 @@ val settingsPatch = bytecodePatch(
             addInstructions(
                 menuListIndex,
                 """
-                    invoke-static/range { v$listRegister .. v$listRegister }, ${Constants.SETTINGS_TILE_CLASS}->addToMainMenu(Ljava/util/List;)Ljava/util/List;
-                    move-result-object v$listRegister
+                    invoke-static/range { v$listRegister .. v$listRegister }, ${Constants.SETTINGS_TILE_CLASS}->addToMainMenu(Ljava/util/List;)V
                 """,
             )
         }

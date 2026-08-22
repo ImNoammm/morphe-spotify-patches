@@ -3,7 +3,6 @@ package app.noam.extension.spotify.settings;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,27 +63,26 @@ public final class SettingsTile {
     }
 
     /**
-     * Called with the main settings menu's entries.
+     * Called with the main settings menu's entries, which it adds the Morphe row to.
      *
-     * @return the entries with the Morphe row added, or the untouched list if it could not be built.
+     * The list is modified in place and nothing is returned. Handing back a new list is what broke
+     * the settings screen before: Spotify keeps its own list type here, so a plain ArrayList failed
+     * to cast. Mutating avoids the question entirely.
      */
-    public static List<Object> addToMainMenu(List<Object> items) {
+    public static void addToMainMenu(List<Object> items) {
         try {
-            if (tile == null) return items;
-
-            List<Object> extended = new ArrayList<>(items);
+            if (tile == null || items == null) return;
 
             // Sit with the other entries rather than below the log-out row, which comes last.
-            int logout = indexOfLogout(extended);
+            int logout = indexOfLogout(items);
             if (logout >= 0) {
-                extended.add(logout, tile);
+                items.add(logout, tile);
             } else {
-                extended.add(tile);
+                items.add(tile);
             }
-            return extended;
         } catch (Throwable ex) {
+            // An immutable list, or anything else unexpected, leaves the menu exactly as it was.
             Utils.logError("Could not add the Morphe row to the main settings menu", ex);
-            return items;
         }
     }
 
