@@ -92,6 +92,12 @@ public final class MorpheSettingsActivity extends Activity {
         streamSwitch = addSwitch(root, "Stream instead of downloading", ServerConfig.isStreaming());
         root.addView(caption("When off, a track is downloaded to the cache the first time it plays."));
 
+        root.addView(button("Save and scan folder", view -> saveAndScan()));
+        root.addView(button("Clear downloaded cache", view -> clearCache()));
+
+        status = caption(describeIndex());
+        root.addView(status);
+
         root.addView(sectionTitle("Lyrics"));
         root.addView(caption(
                 "Draws the full screen lyrics larger, with more space between lines and a gradient "
@@ -101,11 +107,6 @@ public final class MorpheSettingsActivity extends Activity {
         lyricsSwitch.setOnCheckedChangeListener((view, checked) ->
                 ServerConfig.putBoolean(ServerConfig.KEY_BEAUTIFUL_LYRICS, checked));
 
-        root.addView(button("Save and scan folder", view -> saveAndScan()));
-        root.addView(button("Clear downloaded cache", view -> clearCache()));
-
-        status = caption(describeIndex());
-        root.addView(status);
 
         setContentView(scrollView);
         setTitle("Morphe");

@@ -2,6 +2,7 @@ package app.noam.extension.spotify.lyrics;
 
 import android.app.Activity;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -27,13 +28,16 @@ import app.noam.extension.spotify.localserver.ServerConfig;
 public final class BeautifulLyrics {
 
     /** How much larger the lyric lines are drawn. */
-    private static final float TEXT_SCALE = 1.35f;
+    private static final float TEXT_SCALE = 1.6f;
 
     /** Extra room between lines, as a multiplier of the line height. */
-    private static final float LINE_SPACING = 1.18f;
+    private static final float LINE_SPACING = 1.4f;
 
-    /** Lines Spotify has already dimmed are pushed further back. */
-    private static final float INACTIVE_ALPHA = 0.45f;
+    /** Lines Spotify has already dimmed are pushed well back, so the sung line dominates. */
+    private static final float INACTIVE_ALPHA = 0.26f;
+
+    /** Radius of the glow drawn behind the line being sung. */
+    private static final float ACTIVE_GLOW_RADIUS = 24f;
 
     /** Below this, a text view is a header or a control rather than a lyric line. */
     private static final float MINIMUM_LYRIC_SP = 14f;
@@ -47,7 +51,11 @@ public final class BeautifulLyrics {
     /** Called when Spotify's full screen lyrics page is created. */
     public static void onLyricsCreated(final Activity activity) {
         try {
-            if (!isEnabled()) return;
+            if (!isEnabled()) {
+                Utils.log("Beautiful lyrics: switched off, leaving the screen alone");
+                return;
+            }
+            Utils.log("Beautiful lyrics: lyrics screen opened, restyling");
 
             final View root = activity.getWindow().getDecorView();
 
@@ -81,15 +89,30 @@ public final class BeautifulLyrics {
             brightest = Math.max(brightest, brightness(line.getCurrentTextColor()));
         }
 
+        int restyled = 0;
         for (TextView line : lines) {
             if (line.getTag(TAG_SCALED) == null) {
                 line.setTextSize(TypedValue.COMPLEX_UNIT_PX, line.getTextSize() * TEXT_SCALE);
                 line.setLineSpacing(0f, LINE_SPACING);
+                line.setTypeface(line.getTypeface(), Typeface.BOLD);
                 line.setTag(TAG_SCALED, Boolean.TRUE);
+                restyled++;
             }
 
             boolean active = brightness(line.getCurrentTextColor()) >= brightest - 12;
             line.setAlpha(active ? 1f : INACTIVE_ALPHA);
+
+            // The sung line gets a soft glow so it lifts off the background.
+            if (active) {
+                line.setShadowLayer(ACTIVE_GLOW_RADIUS, 0f, 0f,
+                        Color.argb(180, 255, 255, 255));
+            } else {
+                line.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT);
+            }
+        }
+
+        if (restyled > 0) {
+            Utils.log("Beautiful lyrics: restyled " + restyled + " of " + lines.size() + " lines");
         }
 
         applyGradient(root);
@@ -129,10 +152,16 @@ public final class BeautifulLyrics {
         int base = ((ColorDrawable) backdrop.getBackground()).getColor();
         GradientDrawable gradient = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{lighten(base, 0.18f), base, darken(base, 0.55f)});
+                new int[]{
+                        lighten(base, 0.45f),
+                        lighten(base, 0.10f),
+                        darken(base, 0.35f),
+                        darken(base, 0.80f),
+                });
 
         backdrop.setBackground(gradient);
         backdrop.setTag(TAG_GRADIENT, Boolean.TRUE);
+        Utils.log("Beautiful lyrics: gradient applied over " + Integer.toHexString(base));
     }
 
     /** @return the largest view whose background is the flat artwork colour. */
