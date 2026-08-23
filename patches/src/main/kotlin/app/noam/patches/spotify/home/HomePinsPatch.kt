@@ -35,8 +35,8 @@ val homePinsPatch = bytecodePatch(
             }
             .addInstruction(
                 0,
-                "invoke-static/range { p1 .. p1 }, ${Constants.HOME_PINS_CLASS}->" +
-                    "reorder(Ljava/lang/Object;)V",
+                "invoke-static/range { p0 .. p1 }, ${Constants.HOME_PINS_CLASS}->" +
+                    "bind(Ljava/lang/Object;Ljava/lang/Object;)V",
             )
     }
 }

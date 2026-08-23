@@ -1,5 +1,12 @@
 package app.noam.extension.spotify.home;
 
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.PopupMenu;
+import android.widget.TextView;
+import android.widget.Toast;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -41,6 +48,277 @@ public final class HomePins {
         ServerConfig.putString(KEY_PINS, text == null ? "" : text);
     }
 
+    /**
+     * Called as the home shortcuts grid is about to render.
+     *
+     * @param grid  the grid element, used to reach its view and attach long press.
+     * @param model the model carrying the shortcuts.
+     */
+    public static void bind(final Object grid, Object model) {
+        lastModel = model;
+        reorder(model);
+        attachLongPress(grid);
+    }
+
+    /**
+     * Gives each shortcut a long press that pins or unpins it.
+     *
+     * Spotify attaches no long press to this grid at all, so there is no menu to add an entry to;
+     * this adds the gesture itself. The tile's own tap is left alone.
+     */
+    private static void attachLongPress(final Object grid) {
+        try {
+            if (grid == null) return;
+
+            final View view = (View) grid.getClass().getMethod("getView").invoke(grid);
+            if (view == null) return;
+
+            view.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        List<View> tiles = new ArrayList<>();
+                        collectTiles(view, tiles);
+
+                        List<String> names = seenNames();
+                        for (int i = 0; i < tiles.size() && i < names.size(); i++) {
+                            final String name = names.get(i);
+                            View tile = tiles.get(i);
+
+                            // Spotify rebinds these tiles when returning from a playlist, which
+                            // drops anything written into the model. Reassert the marker on the
+                            // view itself every pass.
+                            markTileNow(tile, pinned().contains(name.toLowerCase()));
+
+                            if (Boolean.TRUE.equals(tile.getTag(TAG_BOUND))) continue;
+                            tile.setTag(TAG_BOUND, Boolean.TRUE);
+
+                            tile.setOnLongClickListener(new View.OnLongClickListener() {
+                                @Override
+                                public boolean onLongClick(View v) {
+                                    showMenu(v, name);
+                                    return true;
+                                }
+                            });
+                        }
+                    } catch (Throwable ex) {
+                        Utils.logError("Could not attach long press to the home shortcuts", ex);
+                    }
+                }
+            });
+        } catch (Throwable ex) {
+            Utils.logError("Could not reach the home shortcuts view", ex);
+        }
+    }
+
+    private static final int TAG_BOUND = 0x4d4f5260;
+
+    /** The model last handed to the grid, so a pin can be applied without waiting for a refresh. */
+    private static volatile Object lastModel;
+
+    /**
+     * Offers the pin as a menu entry on the cover, rather than acting on the press itself.
+     *
+     * Spotify attaches nothing to these covers, so there is no menu of its own to extend here; this
+     * is the menu, and it leaves the cover's ordinary tap alone.
+     */
+    private static void showMenu(final View tile, final String name) {
+        try {
+            boolean isPinned = pinned().contains(name.toLowerCase());
+
+            PopupMenu menu = new PopupMenu(tile.getContext(), tile);
+            menu.getMenu().add(isPinned ? "Unpin from Home" : "Pin to Home")
+                    .setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
+                        @Override
+                        public boolean onMenuItemClick(MenuItem item) {
+                            toggle(tile, name);
+                            return true;
+                        }
+                    });
+
+            // Spotify's own menu for the item, so adding the pin does not cost access to it.
+            final View overflow = findOverflow(tile);
+            if (overflow != null) {
+                menu.getMenu().add("More options")
+                        .setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
+                            @Override
+                            public boolean onMenuItemClick(MenuItem item) {
+                                overflow.performClick();
+                                return true;
+                            }
+                        });
+            }
+            menu.show();
+        } catch (Throwable ex) {
+            Utils.logError("Could not show the pin menu", ex);
+        }
+    }
+
+    /**
+     * Moves the tile to the front of the grid on the spot.
+     *
+     * Reordering the model only shows up when Spotify next rebuilds the grid, which leaves a pin
+     * looking like it did nothing. Moving the view puts it where it belongs immediately, and the
+     * model keeps it there afterwards.
+     */
+    private static void moveTileNow(View tile, boolean nowPinned) {
+        try {
+            if (!(tile.getParent() instanceof ViewGroup)) return;
+            ViewGroup parent = (ViewGroup) tile.getParent();
+
+            // A recycling list owns the position of its children; moving them by hand corrupts it.
+            if (parent.getClass().getName().contains("RecyclerView")) return;
+
+            int target = nowPinned ? 0 : parent.getChildCount() - 1;
+            if (parent.indexOfChild(tile) == target) return;
+
+            parent.removeView(tile);
+            parent.addView(tile, target);
+            Utils.log("Home pins: tile moved to position " + target);
+        } catch (Throwable ex) {
+            Utils.log("Home pins: could not move the tile: " + ex);
+        }
+    }
+
+    /** @return the tile's own context button, the one Spotify draws as three dots. */
+    private static View findOverflow(View view) {
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View child = group.getChildAt(i);
+
+                CharSequence description = child.getContentDescription();
+                if (child.isClickable() && description != null) {
+                    String text = description.toString().toLowerCase();
+                    if (text.contains("more") || text.contains("option") || text.contains("context")) {
+                        return child;
+                    }
+                }
+
+                View found = findOverflow(child);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** Pins or unpins a shortcut and tells the user which happened. */
+    private static void toggle(View anchor, String name) {
+        try {
+            Set<String> pins = pinned();
+            String key = name.toLowerCase();
+
+            boolean nowPinned;
+            if (pins.remove(key)) {
+                nowPinned = false;
+            } else {
+                pins.add(key);
+                nowPinned = true;
+            }
+
+            StringBuilder text = new StringBuilder();
+            for (String pin : pins) text.append(pin).append('\n');
+            setPinned(text.toString());
+
+            // Update the tile in front of the user straight away. Spotify rebuilds this grid on
+            // its own schedule, so waiting for that leaves the tap looking like it did nothing.
+            markTileNow(anchor, nowPinned);
+            moveTileNow(anchor, nowPinned);
+
+            reorder(lastModel);
+            refreshGrid(anchor);
+
+            Toast.makeText(anchor.getContext(),
+                    (nowPinned ? "Pinned " : "Unpinned ") + name,
+                    Toast.LENGTH_SHORT).show();
+            Utils.log("Home pins: " + (nowPinned ? "pinned " : "unpinned ") + name);
+        } catch (Throwable ex) {
+            Utils.logError("Could not toggle the pin", ex);
+        }
+    }
+
+    /** Adds or removes the pin on the tile that was just tapped, without waiting for a rebuild. */
+    private static void markTileNow(View tile, boolean nowPinned) {
+        try {
+            List<TextView> labels = new ArrayList<>();
+            collectLabels(tile, labels);
+
+            for (TextView label : labels) {
+                String text = label.getText() == null ? "" : label.getText().toString();
+                if (text.isEmpty()) continue;
+
+                if (nowPinned && !text.startsWith(PIN_MARK)) {
+                    label.setText(PIN_MARK + text);
+                } else if (!nowPinned && text.startsWith(PIN_MARK)) {
+                    label.setText(text.substring(PIN_MARK.length()));
+                }
+                return;
+            }
+        } catch (Throwable ex) {
+            Utils.log("Home pins: could not update the tile: " + ex);
+        }
+    }
+
+    private static void collectLabels(View view, List<TextView> into) {
+        if (view instanceof TextView) {
+            into.add((TextView) view);
+            return;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) collectLabels(group.getChildAt(i), into);
+        }
+    }
+
+    /** Redraws the grid so a pin takes effect on the spot. */
+    private static void refreshGrid(View tile) {
+        try {
+            ViewGroup parent = (ViewGroup) tile.getParent();
+            while (parent != null) {
+                try {
+                    Object adapter = parent.getClass().getMethod("getAdapter").invoke(parent);
+                    if (adapter != null) {
+                        adapter.getClass().getMethod("notifyDataSetChanged").invoke(adapter);
+                        Utils.log("Home pins: grid redrawn");
+                        return;
+                    }
+                } catch (NoSuchMethodException notAList) {
+                    // Keep walking up; this one is a plain group.
+                }
+                parent = parent.getParent() instanceof ViewGroup
+                        ? (ViewGroup) parent.getParent()
+                        : null;
+            }
+        } catch (Throwable ex) {
+            Utils.log("Home pins: could not redraw the grid: " + ex);
+        }
+    }
+
+    /** The tiles of the grid, in the order they are shown. */
+    private static void collectTiles(View view, List<View> into) {
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+
+            // A grid's tiles are the children of whichever group holds several of them.
+            if (group.getChildCount() > 2 && group.getChildAt(0) instanceof ViewGroup) {
+                for (int i = 0; i < group.getChildCount(); i++) into.add(group.getChildAt(i));
+                return;
+            }
+            for (int i = 0; i < group.getChildCount(); i++) {
+                collectTiles(group.getChildAt(i), into);
+                if (!into.isEmpty()) return;
+            }
+        }
+    }
+
+    public static List<String> seenNames() {
+        List<String> names = new ArrayList<>();
+        for (String line : ServerConfig.getString(KEY_SEEN, "").split("\n")) {
+            if (!line.trim().isEmpty()) names.add(line.trim());
+        }
+        return names;
+    }
+
     /** Called as the home shortcuts grid is about to render. */
     public static void reorder(Object model) {
         try {
@@ -75,11 +353,13 @@ public final class HomePins {
                     }
                 }
 
-                rememberNames(items);
-
                 Utils.log("Home pins: list field " + field.getName() + " has " + items.size()
                         + " items, " + front.size() + " matched");
-                if (front.isEmpty() || front.size() == items.size()) continue;
+                if (front.isEmpty() || front.size() == items.size()) {
+                    // Nothing moved, so what is shown is what arrived.
+                    rememberNames(items);
+                    continue;
+                }
 
                 for (Object item : front.subList(0, front.size() - rest.size() >= 0
                         ? front.size() - rest.size() : front.size())) {
@@ -93,12 +373,38 @@ public final class HomePins {
                 } catch (UnsupportedOperationException immutable) {
                     field.set(model, front);
                 }
+
+                // Record the names in the order they are actually drawn, so a long press on the
+                // third tile pins the third playlist rather than whatever the server sent third.
+                rememberNames(front);
                 Utils.log("Home pins: moved " + (items.size() - rest.size()) + " shortcuts to the front");
                 return;
             }
         } catch (Throwable ex) {
             Utils.logError("Could not reorder the home shortcuts", ex);
         }
+    }
+
+    /** @return true when a title was found on this object and marked. */
+    private static boolean markIn(Object holder) throws IllegalAccessException {
+        for (Field field : holder.getClass().getDeclaredFields()) {
+            if (field.getType() != String.class) continue;
+
+            field.setAccessible(true);
+            Object value = field.get(holder);
+            if (!(value instanceof String)) continue;
+
+            String text = (String) value;
+            if (text.isEmpty() || text.startsWith("spotify:") || text.startsWith(PIN_MARK)
+                    || text.length() > 60) {
+                continue;
+            }
+
+            field.set(holder, PIN_MARK + text);
+            Utils.log("Home pins: marked \"" + text + "\" on " + holder.getClass().getSimpleName());
+            return true;
+        }
+        return false;
     }
 
     /** Records the names on the grid, so the settings screen can list them to pin. */
@@ -149,36 +455,19 @@ public final class HomePins {
         }
     }
 
-    /** Prefixes the first title-looking String on this object. */
-    private static boolean markIn(Object holder) throws IllegalAccessException {
-        for (Field field : holder.getClass().getDeclaredFields()) {
-            if (field.getType() != String.class) continue;
-
-            field.setAccessible(true);
-            Object value = field.get(holder);
-            if (!(value instanceof String)) continue;
-
-            String text = (String) value;
-            if (text.isEmpty() || text.length() > 60 || text.startsWith("spotify:")
-                    || text.startsWith(PIN_MARK) || text.contains("://")) {
-                continue;
-            }
-
-            field.set(holder, PIN_MARK + text);
-            Utils.log("Home pins: marked \"" + text + "\"");
-            return true;
-        }
-        return false;
-    }
 
     /** A shortcut counts as pinned when any of its text carries a pinned name. */
     private static boolean isPinned(Object item, Set<String> pins) {
         if (item == null) return false;
 
+        // Any of the strings the item carries may be the title; exact matching makes checking all
+        // of them safe, where substring matching dragged in unrelated shortcuts.
         for (String text : textOf(item)) {
-            String lower = text.toLowerCase();
+            String lower = text.replace(PIN_MARK, "").trim().toLowerCase();
+            // Exact names only. Substring matching kept dragging unrelated shortcuts along with a
+            // pin, because these items carry several strings and some are far from unique.
             for (String pin : pins) {
-                if (lower.equals(pin) || lower.contains(pin)) return true;
+                if (lower.equals(pin)) return true;
             }
         }
         return false;
