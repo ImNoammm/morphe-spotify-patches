@@ -4,8 +4,9 @@ Morphe patches for the Spotify Android app.
 
 | Patch | What it does |
 | --- | --- |
-| **Morphe settings** | Adds a **Morphe** row to Spotify's settings. It is where the settings of every other patch in this bundle live. |
-| **Local files from a server** | Lets Spotify take its local files from a Nextcloud (or plain WebDAV) folder. The tracks appear under **Local Files** and are streamed from the server as they play. |
+| **Morphe settings** | Adds a **Morphe** row to Spotify's settings, in the main list. It is where the settings of every other patch in this bundle live. |
+| **Local files from a server** | Lets Spotify take its local files from a Nextcloud (or plain WebDAV) folder. The tracks appear under **Local Files** and are streamed from the server as they play. Rescanned each time the app starts. |
+| **Pin shortcuts on Home** | Long press a cover on Home to pin it. Pinned playlists stay at the front of the grid, marked with a pin, and the order is kept on the device rather than depending on what the server sends. |
 
 ## Add it to Morphe
 
@@ -19,6 +20,16 @@ source by hand:
   (the bundle metadata directly, if the repository URL is not accepted)
 
 Morphe then picks up each release automatically.
+
+## Pin shortcuts on Home
+
+Long pressing a cover offers **Pin to Home** / **Unpin from Home**, and **Spotify options** for
+whatever Spotify itself binds to that cover, so the pin costs nothing. Pinned covers move to the
+front and carry a pin in their title.
+
+The grid is filled by the server, so nothing here fetches or adds anything: the list Spotify is
+about to render is reordered on the way past, using names kept on the device. If the model is not
+shaped the way this expects, the grid is left exactly as it came.
 
 ## Local files from a server
 
