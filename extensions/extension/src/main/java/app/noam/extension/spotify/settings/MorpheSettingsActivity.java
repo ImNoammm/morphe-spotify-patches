@@ -46,7 +46,6 @@ public final class MorpheSettingsActivity extends Activity {
     private EditText folderField;
     private Switch enabledSwitch;
     private Switch streamSwitch;
-    private Switch lyricsSwitch;
     private EditText pinsField;
     private TextView status;
 
@@ -113,14 +112,6 @@ public final class MorpheSettingsActivity extends Activity {
             status.setText("Pinned playlists saved. Pull down on Home to refresh.");
         }));
 
-        root.addView(sectionTitle("Lyrics"));
-        root.addView(caption(
-                "Draws the full screen lyrics larger, with more space between lines and a gradient "
-                        + "behind them, closer to how the desktop player looks."));
-        lyricsSwitch = addSwitch(root, "Beautiful lyrics",
-                ServerConfig.getBoolean(ServerConfig.KEY_BEAUTIFUL_LYRICS, false));
-        lyricsSwitch.setOnCheckedChangeListener((view, checked) ->
-                ServerConfig.putBoolean(ServerConfig.KEY_BEAUTIFUL_LYRICS, checked));
 
 
         setContentView(scrollView);

@@ -86,12 +86,17 @@ public final class HomePins {
                             View tile = tiles.get(i);
 
                             // Spotify rebinds these tiles when returning from a playlist, which
-                            // drops anything written into the model. Reassert the marker on the
-                            // view itself every pass.
-                            markTileNow(tile, pinned().contains(name.toLowerCase()));
+                            // drops anything written into the model. Reassert the marker here, and
+                            // only ever add it: removing on this pass strips the marker from a
+                            // pinned cover whenever a name and a tile fall out of step.
+                            if (pinned().contains(name.toLowerCase())) markTileNow(tile, true);
 
                             if (Boolean.TRUE.equals(tile.getTag(TAG_BOUND))) continue;
                             tile.setTag(TAG_BOUND, Boolean.TRUE);
+
+                            // Keep whatever Spotify already had here, so its own menu stays
+                            // reachable instead of being replaced by the pin.
+                            tile.setTag(TAG_ORIGINAL, existingLongClick(tile));
 
                             tile.setOnLongClickListener(new View.OnLongClickListener() {
                                 @Override
@@ -112,6 +117,35 @@ public final class HomePins {
     }
 
     private static final int TAG_BOUND = 0x4d4f5260;
+    private static final int TAG_ORIGINAL = 0x4d4f5261;
+
+    /**
+     * Spotify's own long press handler for a cover, read before it is replaced.
+     *
+     * There is no public way to read a view's listener back, so this reaches the field the platform
+     * keeps it in. If that is not reachable, the pin menu simply has no entry for Spotify's menu.
+     */
+    private static View.OnLongClickListener existingLongClick(View view) {
+        try {
+            java.lang.reflect.Field infoField = View.class.getDeclaredField("mListenerInfo");
+            infoField.setAccessible(true);
+            Object info = infoField.get(view);
+            if (info == null) return null;
+
+            java.lang.reflect.Field listenerField =
+                    info.getClass().getDeclaredField("mOnLongClickListener");
+            listenerField.setAccessible(true);
+            Object listener = listenerField.get(info);
+
+            if (listener instanceof View.OnLongClickListener) {
+                Utils.log("Home pins: kept Spotify's own long press on a cover");
+                return (View.OnLongClickListener) listener;
+            }
+        } catch (Throwable ex) {
+            Utils.log("Home pins: no original long press to keep: " + ex);
+        }
+        return null;
+    }
 
     /** The model last handed to the grid, so a pin can be applied without waiting for a refresh. */
     private static volatile Object lastModel;
@@ -137,13 +171,19 @@ public final class HomePins {
                     });
 
             // Spotify's own menu for the item, so adding the pin does not cost access to it.
-            final View overflow = findOverflow(tile);
-            if (overflow != null) {
-                menu.getMenu().add("More options")
+            final Object original = tile.getTag(TAG_ORIGINAL);
+            final View overflow = original == null ? findOverflow(tile) : null;
+
+            if (original instanceof View.OnLongClickListener || overflow != null) {
+                menu.getMenu().add("Spotify options")
                         .setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
                             @Override
                             public boolean onMenuItemClick(MenuItem item) {
-                                overflow.performClick();
+                                if (original instanceof View.OnLongClickListener) {
+                                    ((View.OnLongClickListener) original).onLongClick(tile);
+                                } else if (overflow != null) {
+                                    overflow.performClick();
+                                }
                                 return true;
                             }
                         });
