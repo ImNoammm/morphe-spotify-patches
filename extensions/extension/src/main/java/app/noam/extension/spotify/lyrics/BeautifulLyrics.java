@@ -57,22 +57,33 @@ public final class BeautifulLyrics {
             }
             Utils.log("Beautiful lyrics: lyrics screen opened, restyling");
 
-            final View root = activity.getWindow().getDecorView();
+            final View decor = activity.getWindow().getDecorView();
 
-            // The lines are recycled and restyled as the song plays, so reapply on every layout
-            // pass rather than once.
-            root.getViewTreeObserver().addOnGlobalLayoutListener(
-                    new ViewTreeObserver.OnGlobalLayoutListener() {
-                        @Override
-                        public void onGlobalLayout() {
-                            try {
-                                restyle(root);
-                            } catch (Throwable ex) {
-                                root.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                                Utils.logError("Could not restyle the lyrics", ex);
-                            }
-                        }
-                    });
+            // Registering straight away attaches to the view tree that exists before the activity
+            // installs its content, and that observer is discarded with it — which is why this
+            // restyled nothing. Posting waits until onCreate has returned and the real tree is up.
+            decor.post(new Runnable() {
+                @Override
+                public void run() {
+                    View content = activity.findViewById(android.R.id.content);
+                    final View root = content != null ? content : decor;
+
+                    root.getViewTreeObserver().addOnGlobalLayoutListener(
+                            new ViewTreeObserver.OnGlobalLayoutListener() {
+                                @Override
+                                public void onGlobalLayout() {
+                                    try {
+                                        restyle(root);
+                                    } catch (Throwable ex) {
+                                        root.getViewTreeObserver()
+                                                .removeOnGlobalLayoutListener(this);
+                                        Utils.logError("Could not restyle the lyrics", ex);
+                                    }
+                                }
+                            });
+                    Utils.log("Beautiful lyrics: watching the lyrics view tree");
+                }
+            });
         } catch (Throwable ex) {
             Utils.logError("Could not hook the lyrics screen", ex);
         }
@@ -80,8 +91,16 @@ public final class BeautifulLyrics {
 
     private static void restyle(View root) {
         List<TextView> lines = new ArrayList<>();
-        collectLyricLines(root, lines);
-        if (lines.isEmpty()) return;
+        int[] seen = new int[1];
+        collectLyricLines(root, lines, seen);
+
+        if (lines.isEmpty()) {
+            if (!reportedEmpty && seen[0] > 0) {
+                reportedEmpty = true;
+                Utils.log("Beautiful lyrics: saw " + seen[0] + " text views, none big enough to be lyrics");
+            }
+            return;
+        }
 
         // The brightest line is the one being sung; everything else is pushed back.
         int brightest = 0;
@@ -122,9 +141,12 @@ public final class BeautifulLyrics {
     private static final int TAG_GRADIENT = 0x4d4f5251;
 
     /** Collects the text views that are lyric lines, skipping the title and the controls. */
-    private static void collectLyricLines(View view, List<TextView> into) {
+    private static boolean reportedEmpty;
+
+    private static void collectLyricLines(View view, List<TextView> into, int[] seen) {
         if (view instanceof TextView) {
             TextView text = (TextView) view;
+            seen[0]++;
             float sp = text.getTextSize() / text.getResources().getDisplayMetrics().scaledDensity;
 
             if (sp >= MINIMUM_LYRIC_SP && text.getText() != null && text.getText().length() > 0) {
@@ -136,7 +158,7 @@ public final class BeautifulLyrics {
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) {
-                collectLyricLines(group.getChildAt(i), into);
+                collectLyricLines(group.getChildAt(i), into, seen);
             }
         }
     }

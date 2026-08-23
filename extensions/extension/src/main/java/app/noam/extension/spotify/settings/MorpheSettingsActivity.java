@@ -23,6 +23,7 @@ import app.noam.extension.spotify.localserver.LocalServerHook;
 import app.noam.extension.spotify.localserver.RemoteTrack;
 import app.noam.extension.spotify.localserver.ServerConfig;
 import app.noam.extension.spotify.localserver.ServerFileProvider;
+import app.noam.extension.spotify.home.HomePins;
 import app.noam.extension.spotify.localserver.ServerIndex;
 
 /**
@@ -46,6 +47,7 @@ public final class MorpheSettingsActivity extends Activity {
     private Switch enabledSwitch;
     private Switch streamSwitch;
     private Switch lyricsSwitch;
+    private EditText pinsField;
     private TextView status;
 
     public static Integer titleResourceId() {
@@ -97,6 +99,19 @@ public final class MorpheSettingsActivity extends Activity {
 
         status = caption(describeIndex());
         root.addView(status);
+
+        root.addView(sectionTitle("Pinned on Home"));
+        root.addView(caption(
+                "One playlist name per line. Matching shortcuts are kept at the front of the grid "
+                        + "on Home. Held on this device, so it does not depend on the server."));
+        pinsField = addField(root, "Pinned playlists", "Oldschool shi\nYeezus",
+                ServerConfig.getString(HomePins.KEY_PINS, ""), false);
+        pinsField.setSingleLine(false);
+        pinsField.setMinLines(3);
+        root.addView(button("Save pinned playlists", view -> {
+            HomePins.setPinned(pinsField.getText().toString());
+            status.setText("Pinned playlists saved. Pull down on Home to refresh.");
+        }));
 
         root.addView(sectionTitle("Lyrics"));
         root.addView(caption(
